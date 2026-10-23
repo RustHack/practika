@@ -1,62 +1,76 @@
-"""Модели предметной области: биржевой портфель."""
-
+"""
+Модели предметной области — инвестиционный портфель.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
+from datetime import datetime
 
 
-class OperationStatus(Enum):
-    CREATED = "создана"
-    EXECUTED = "исполнена"
-    CANCELLED = "отменена"
+class OrderSide(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
 
 
-class InstrumentType(Enum):
-    STOCK = "акция"
-    BOND = "облигация"
+class OrderStatus(str, Enum):
+    NEW = "new"
+    FILLED = "filled"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
 
 
 @dataclass
 class Instrument:
-    id: int
     ticker: str
     name: str
+    asset_class: str
     price: float
-    quantity: int = 0
+
+    def __str__(self) -> str:
+        return f"{self.ticker} ({self.name}) @ {self.price}"
+
+
+@dataclass
+class Position:
+    instrument: Instrument
+    quantity: float
+    avg_price: float
+    current_price: float
 
     @property
-    def value(self) -> float:
-        return self.price * self.quantity
+    def market_value(self) -> float:
+        return self.quantity * self.current_price
+
+    @property
+    def cost_basis(self) -> float:
+        return self.quantity * self.avg_price
+
+    @property
+    def pnl(self) -> float:
+        return self.market_value - self.cost_basis
+
+    def __str__(self) -> str:
+        return (
+            f"{self.instrument.ticker}: qty={self.quantity} "
+            f"avg={self.avg_price:.2f} cur={self.current_price:.2f} "
+            f"PnL={self.pnl:+.2f}"
+        )
 
 
 @dataclass
-class Stock(Instrument):
-    dividend_yield: float = 0.0
-
-    def profit_estimate(self) -> float:
-        return self.value * self.dividend_yield / 100
-
-
-@dataclass
-class Bond(Instrument):
-    coupon_rate: float = 0.0
-    nominal: float = 1000.0
-
-    def profit_estimate(self) -> float:
-        return self.quantity * self.nominal * self.coupon_rate / 100
-
-
-@dataclass
-class Operation:
+class Order:
     id: int
-    instrument_id: int
     ticker: str
-    operation_type: str
-    quantity: int
+    side: OrderSide
+    quantity: float
     price: float
-    status: OperationStatus = OperationStatus.CREATED
+    status: OrderStatus = OrderStatus.NEW
+    created_at: datetime = field(default_factory=datetime.now)
 
-    @property
-    def amount(self) -> float:
-        return self.quantity * self.price
+    def __str__(self) -> str:
+        return (
+            f"Order#{self.id} {self.side.value} {self.quantity} {self.ticker} "
+            f"@ {self.price} [{self.status.value}]"
+        )

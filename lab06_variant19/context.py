@@ -1,35 +1,48 @@
-"""Контекстный менеджер."""
-
+"""
+Контекстные менеджеры для лабораторной 6.
+"""
 from __future__ import annotations
 
-import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Generator, Type, Tuple, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-class OperationTimer:
-    """Контекстный менеджер: измеряет время блока и пишет в лог."""
+@contextmanager
+def portfolio_transaction(portfolio) -> Generator:
+    """
+    Транзакция портфеля: при успехе — commit, при исключении — rollback.
+    """
+    portfolio.save_snapshot()
+    try:
+        yield portfolio
+        portfolio.clear_snapshot()
+    except Exception:
+        portfolio.restore_snapshot()
+        raise
 
-    def __init__(self, operation_name: str) -> None:
-        self.operation_name = operation_name
-        self.start: Optional[float] = None
-        self.elapsed: float = 0.0
 
-    def __enter__(self) -> OperationTimer:
-        print(f"[CTX] Начало: {self.operation_name}")
-        self.start = time.perf_counter()
-        return self
+@contextmanager
+def temporary_price(portfolio, ticker: str, price: float) -> Generator[None, None, None]:
+    """Временно подменяет цену инструмента, затем восстанавливает."""
+    old_price = portfolio.get_price(ticker)
+    portfolio.update_price(ticker, price)
+    try:
+        yield
+    finally:
+        portfolio.update_price(ticker, old_price)
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
-        if self.start is not None:
-            self.elapsed = time.perf_counter() - self.start
-        if exc_type is not None:
-            print(
-                f"[CTX] Ошибка в «{self.operation_name}»: {exc_val} "
-                f"({self.elapsed:.4f} sec)"
-            )
-        else:
-            print(
-                f"[CTX] Завершено: {self.operation_name} "
-                f"({self.elapsed:.4f} sec)"
-            )
-        return False
+
+@contextmanager
+def suppress_and_log(
+    *exc_types: Type[BaseException],
+    log_prefix: str = "[suppress]",
+) -> Generator[None, None, None]:
+    """Подавляет указанные исключения и пишет в лог."""
+    try:
+        yield
+    except exc_types as e:
+        logger.warning("%s %s: %s", log_prefix, type(e).__name__, e)
+        print(f"{log_prefix} подавлено: {type(e).__name__}: {e}")
