@@ -5,7 +5,7 @@
 ## Уже в репозитории
 
 - `main.py`, `practica2.py`, `practica3.py` — лабы 1–3
-- `lab04_variant19` … `lab21_variant19` — лабы 4–21 (добавляются)
+- `lab04_variant19` … `lab21_variant19` — лабы 4–21
 
 ## Тема варианта 19
 
