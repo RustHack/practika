@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Портфель</title>
+<style>body{font-family:sans-serif;margin:2rem}table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ccc;padding:.4rem} .flash{color:green}</style></head>
+<body>
+<h1>Инвестиционный портфель</h1>
+{% for m in get_flashed_messages() %}<p class="flash">{{ m }}</p>{% endfor %}
+<p><a href="{{ url_for('add') }}">+ Добавить актив</a></p>
+<table>
+<tr><th>Тикер</th><th>Название</th><th>Тип</th><th>Кол-во</th><th>Цена</th><th>Сумма</th><th></th></tr>
+{% for a in assets %}
+<tr>
+  <td>{{ a.ticker }}</td><td>{{ a.name }}</td><td>{{ a.type }}</td>
+  <td>{{ a.qty }}</td><td>{{ a.price }}</td><td>{{ '%.2f'|format(a.qty * a.price) }}</td>
+  <td>
+    <a href="{{ url_for('edit', aid=a.id) }}">изменить</a>
+    <form style="display:inline" method="post" action="{{ url_for('delete', aid=a.id) }}">
+      <button type="submit">удалить</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</table>
+<p><b>Итого: {{ '%.2f'|format(total) }}</b></p>
+</body></html>

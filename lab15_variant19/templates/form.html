@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Актив</title></head>
+<body>
+<h1>{% if asset %}Изменить{% else %}Добавить{% endif %}</h1>
+<form method="post">
+  {% if not asset %}
+  <p>Тикер: <input name="ticker" required></p>
+  <p>Название: <input name="name" required></p>
+  <p>Тип: <select name="type"><option>stock</option><option>bond</option><option>fund</option></select></p>
+  {% endif %}
+  <p>Количество: <input name="qty" type="number" step="any" value="{{ asset.qty if asset else 1 }}" required></p>
+  <p>Цена: <input name="price" type="number" step="any" value="{{ asset.price if asset else 100 }}" required></p>
+  <button type="submit">Сохранить</button>
+</form>
+<p><a href="{{ url_for('index') }}">Назад</a></p>
+</body></html>
