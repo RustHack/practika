@@ -1,70 +1,81 @@
 """ЛР18 — pytest + unittest.mock, вариант 19: биржевой симулятор."""
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from portfolio import Portfolio, StaticQuotes
+
 
 @pytest.fixture
 def quotes():
-    return StaticQuotes({"SBER": 100.0, "GAZP": 50.0})
+    return StaticQuotes({"SBER": 285.4, "GAZP": 158.2, "LKOH": 7120.0})
+
 
 @pytest.fixture
 def portfolio(quotes):
-    return Portfolio(cash=1000.0, quotes=quotes)
+    p = Portfolio(quotes)
+    p.buy("SBER", 100, 270.0)
+    p.buy("GAZP", 200, 165.0)
+    return p
 
-def test_create_portfolio(portfolio):
-    assert portfolio.cash == 1000
-    assert portfolio.positions == {}
 
-def test_buy(portfolio):
-    portfolio.buy("SBER", 2)
-    assert portfolio.positions["SBER"] == 2
-    assert portfolio.cash == 800
+def test_buy_creates_position(portfolio):
+    assert "SBER" in portfolio.positions
+    assert portfolio.positions["SBER"].quantity == 100
+    assert portfolio.positions["SBER"].avg_price == 270.0
 
-def test_sell(portfolio):
-    portfolio.buy("SBER", 5)
-    portfolio.sell("SBER", 2)
-    assert portfolio.positions["SBER"] == 3
-    assert portfolio.cash == 700
 
-def test_value(portfolio):
-    portfolio.buy("SBER", 2)
-    portfolio.buy("GAZP", 2)
-    assert portfolio.value() == 1000
+def test_total_value(portfolio):
+    # SBER 100*285.4 + GAZP 200*158.2
+    expected = 100 * 285.4 + 200 * 158.2
+    assert abs(portfolio.total_value() - expected) < 0.01
 
-def test_insufficient_funds(portfolio):
-    with pytest.raises(ValueError, match="средств"):
-        portfolio.buy("SBER", 100)
 
-def test_insufficient_shares(portfolio):
-    with pytest.raises(ValueError, match="бумаг"):
-        portfolio.sell("SBER", 1)
+def test_pnl(portfolio):
+    # SBER: (285.4-270)*100 = 1540; GAZP: (158.2-165)*200 = -1360
+    expected = 1540 + (-1360)
+    assert abs(portfolio.total_pnl() - expected) < 0.01
 
-def test_unknown_ticker(portfolio):
+
+def test_sell_reduces_quantity(portfolio):
+    portfolio.sell("SBER", 40)
+    assert portfolio.positions["SBER"].quantity == 60
+
+
+def test_sell_all_removes_position(portfolio):
+    portfolio.sell("GAZP", 200)
+    assert "GAZP" not in portfolio.positions
+
+
+def test_sell_too_much_raises(portfolio):
+    with pytest.raises(ValueError):
+        portfolio.sell("SBER", 999)
+
+
+def test_buy_unknown_ticker_raises(quotes):
+    p = Portfolio(quotes)
     with pytest.raises(KeyError):
-        portfolio.buy("XXXX", 1)
+        p.buy("UNKNOWN", 10, 100.0)
 
-def test_mock_quotes():
-    mock = Mock()
-    mock.get_price.return_value = 200.0
-    p = Portfolio(1000, mock)
-    p.buy("SBER", 2)
-    mock.get_price.assert_called_with("SBER")
-    assert p.cash == 600
 
-def test_mock_price_change():
-    mock = Mock()
-    mock.get_price.side_effect = [100.0, 150.0]
-    p = Portfolio(1000, mock)
-    p.buy("SBER", 2)
-    assert p.value() == 800 + 2 * 150
+@patch("portfolio.StaticQuotes.get")
+def test_mock_quote(mock_get, portfolio):
+    mock_get.return_value = 300.0
+    # подмена котировки через mock на уровне quotes
+    portfolio.quotes.get = mock_get
+    val = portfolio.positions["SBER"].quantity * portfolio.quotes.get("SBER")
+    assert val == 100 * 300.0
+    mock_get.assert_called_with("SBER")
 
-@pytest.mark.parametrize("qty,ok", [(1, True), (10, True), (11, False)])
-def test_param_buy(qty, ok):
-    q = StaticQuotes({"SBER": 100.0})
-    p = Portfolio(1000, q)
-    if ok:
-        p.buy("SBER", qty)
-        assert p.positions["SBER"] == qty
-    else:
-        with pytest.raises(ValueError):
-            p.buy("SBER", qty)
+
+def test_mock_portfolio_service():
+    """Пример мока внешнего сервиса."""
+    mock_svc = Mock()
+    mock_svc.get_price.return_value = 290.0
+    mock_svc.place_order.return_value = {"status": "filled", "id": 42}
+
+    price = mock_svc.get_price("SBER")
+    order = mock_svc.place_order("SBER", "buy", 10, price)
+
+    assert price == 290.0
+    assert order["status"] == "filled"
+    mock_svc.get_price.assert_called_once_with("SBER")
+    mock_svc.place_order.assert_called_once()

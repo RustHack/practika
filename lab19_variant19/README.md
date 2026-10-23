@@ -5,8 +5,14 @@
 - assets_service :8002 (+ события asset.created)
 - gateway :8000 → GET /api/portfolio
 
-```bash
+Запуск в трёх терминалах:
+```
 python users_service/app.py
 python assets_service/app.py
 python gateway/app.py
+```
+
+Проверка:
+```
+curl http://localhost:8000/api/portfolio
 ```

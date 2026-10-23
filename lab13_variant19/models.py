@@ -3,71 +3,103 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-import copy
+import time
+import uuid
+
 
 @dataclass
 class Asset:
+    """Документ актива в «коллекции» portfolio."""
     ticker: str
     name: str
-    asset_type: str
-    exchange: str
+    asset_class: str
     quantity: float
-    price: float
-    history: List[Dict[str, Any]] = field(default_factory=list)
+    avg_price: float
+    _id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_doc(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["created_at"] = self.created_at.isoformat()
+        return d
+
+    @classmethod
+    def from_doc(cls, doc: Dict[str, Any]) -> "Asset":
+        doc = dict(doc)
+        if isinstance(doc.get("created_at"), str):
+            doc["created_at"] = datetime.fromisoformat(doc["created_at"])
+        return cls(**{k: v for k, v in doc.items() if k in cls.__dataclass_fields__})
+
 
 class MongoStore:
+    """Учебная in-memory имитация MongoDB (коллекция documents)."""
+
     def __init__(self) -> None:
-        self._docs: Dict[str, dict] = {}
+        self._collections: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-    def insert(self, asset: Asset) -> dict:
-        d = asset.to_dict()
-        d["_id"] = asset.ticker
-        d["updated_at"] = datetime.utcnow().isoformat()
-        self._docs[asset.ticker] = d
-        return copy.deepcopy(d)
+    def insert_one(self, collection: str, doc: Dict[str, Any]) -> str:
+        col = self._collections.setdefault(collection, {})
+        _id = doc.get("_id") or str(uuid.uuid4())
+        doc = dict(doc)
+        doc["_id"] = _id
+        col[_id] = doc
+        return _id
 
-    def find(self, ticker: str) -> Optional[dict]:
-        d = self._docs.get(ticker.upper())
-        return copy.deepcopy(d) if d else None
+    def find_one(self, collection: str, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        col = self._collections.get(collection, {})
+        for doc in col.values():
+            if all(doc.get(k) == v for k, v in query.items()):
+                return dict(doc)
+        return None
 
-    def find_all(self, asset_type: str | None = None) -> List[dict]:
-        items = list(self._docs.values())
-        if asset_type:
-            items = [x for x in items if x["asset_type"] == asset_type]
-        return copy.deepcopy(items)
+    def find(self, collection: str, query: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        col = self._collections.get(collection, {})
+        query = query or {}
+        result = []
+        for doc in col.values():
+            if all(doc.get(k) == v for k, v in query.items()):
+                result.append(dict(doc))
+        return result
 
-    def update(self, ticker: str, **fields) -> Optional[dict]:
-        d = self._docs.get(ticker.upper())
-        if not d:
-            return None
-        for k, v in fields.items():
-            if k in d and k != "_id":
-                d[k] = v
-        d["updated_at"] = datetime.utcnow().isoformat()
-        return copy.deepcopy(d)
+    def update_one(self, collection: str, query: Dict[str, Any], update: Dict[str, Any]) -> bool:
+        doc = self.find_one(collection, query)
+        if not doc:
+            return False
+        col = self._collections[collection]
+        _id = doc["_id"]
+        col[_id].update(update.get("$set", update))
+        return True
 
-    def delete(self, ticker: str) -> bool:
-        return self._docs.pop(ticker.upper(), None) is not None
+    def delete_one(self, collection: str, query: Dict[str, Any]) -> bool:
+        doc = self.find_one(collection, query)
+        if not doc:
+            return False
+        del self._collections[collection][doc["_id"]]
+        return True
+
 
 class RedisCache:
+    """Учебная in-memory имитация Redis с TTL."""
+
     def __init__(self) -> None:
-        self._kv: Dict[str, Any] = {}
-        self._scores: Dict[str, float] = {}
+        self._data: Dict[str, tuple] = {}  # key -> (value, expire_at|None)
 
-    def set(self, key: str, value: Any) -> None:
-        self._kv[key] = value
+    def set(self, key: str, value: Any, ex: Optional[int] = None) -> None:
+        expire_at = time.time() + ex if ex else None
+        self._data[key] = (value, expire_at)
 
-    def get(self, key: str) -> Any:
-        return self._kv.get(key)
+    def get(self, key: str) -> Optional[Any]:
+        item = self._data.get(key)
+        if item is None:
+            return None
+        value, expire_at = item
+        if expire_at is not None and time.time() > expire_at:
+            del self._data[key]
+            return None
+        return value
 
     def delete(self, key: str) -> None:
-        self._kv.pop(key, None)
+        self._data.pop(key, None)
 
-    def zadd(self, member: str, score: float) -> None:
-        self._scores[member] = score
-
-    def zrevrange(self, n: int = 5) -> List[tuple]:
-        return sorted(self._scores.items(), key=lambda x: -x[1])[:n]
+    def exists(self, key: str) -> bool:
+        return self.get(key) is not None

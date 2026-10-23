@@ -5,71 +5,87 @@
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
+from datetime import datetime
+
+
+# --- Имитация Django models (без реального Django, чтобы lab запускалась без установки) ---
 
 @dataclass
-class Investor:
-    id: int
-    name: str
-    email: str
-
-@dataclass
-class Asset:
-    id: int
+class Instrument:
+    """Модель инструмента (аналог models.Model)."""
     ticker: str
     name: str
-    asset_type: str
-    price: float
+    asset_class: str  # stock, bond, etf, crypto
+    last_price: float = 0.0
+    id: Optional[int] = None
+
+    def __str__(self) -> str:
+        return f"{self.ticker} — {self.name}"
+
 
 @dataclass
 class Portfolio:
-    id: int
-    investor_id: int
     name: str
-    assets: List[tuple] = field(default_factory=list)
+    owner: str
+    created_at: datetime = field(default_factory=datetime.now)
+    id: Optional[int] = None
+
+    def __str__(self) -> str:
+        return f"Portfolio({self.name})"
+
 
 @dataclass
-class Transaction:
-    id: int
-    portfolio_id: int
-    asset_id: int
-    side: str
+class Position:
+    portfolio: Portfolio
+    instrument: Instrument
     quantity: float
-    price: float
+    avg_price: float
+    id: Optional[int] = None
 
-class PortfolioStore:
-    def __init__(self):
-        self.investors = [Investor(1, "Иванов", "ivanov@mail.ru")]
-        self.assets = [
-            Asset(1, "SBER", "Сбербанк", "stock", 280.5),
-            Asset(2, "GAZP", "Газпром", "stock", 160.0),
-        ]
-        self.portfolios = [Portfolio(1, 1, "Основной", [(1, 100), (2, 50)])]
-        self.transactions: List[Transaction] = []
-        self._tid = 1
+    @property
+    def market_value(self) -> float:
+        return self.quantity * self.instrument.last_price
 
-    def portfolio_value(self, pid: int) -> float:
-        p = next(x for x in self.portfolios if x.id == pid)
-        total = 0.0
-        for aid, qty in p.assets:
-            a = next(x for x in self.assets if x.id == aid)
-            total += qty * a.price
-        return total
+    @property
+    def pnl(self) -> float:
+        return self.market_value - self.quantity * self.avg_price
 
-    def buy(self, pid: int, asset_id: int, qty: float, price: float) -> Transaction:
-        p = next(x for x in self.portfolios if x.id == pid)
-        found = False
-        new_assets = []
-        for aid, q in p.assets:
-            if aid == asset_id:
-                new_assets.append((aid, q + qty))
-                found = True
-            else:
-                new_assets.append((aid, q))
+    def __str__(self) -> str:
+        return f"{self.instrument.ticker}: {self.quantity} @ {self.avg_price}"
+
+
+# Простой in-memory «ORM» для демонстрации
+class _Manager:
+    def __init__(self, model_cls):
+        self._model = model_cls
+        self._items: List = []
+        self._pk = 1
+
+    def create(self, **kwargs):
+        obj = self._model(**kwargs)
+        obj.id = self._pk
+        self._pk += 1
+        self._items.append(obj)
+        return obj
+
+    def all(self):
+        return list(self._items)
+
+    def filter(self, **kwargs):
+        result = self._items
+        for k, v in kwargs.items():
+            result = [x for x in result if getattr(x, k, None) == v]
+        return result
+
+    def get(self, **kwargs):
+        found = self.filter(**kwargs)
         if not found:
-            new_assets.append((asset_id, qty))
-        p.assets = new_assets
-        t = Transaction(self._tid, pid, asset_id, "buy", qty, price)
-        self._tid += 1
-        self.transactions.append(t)
-        return t
+            raise ValueError("DoesNotExist")
+        return found[0]
+
+
+# Подвешиваем managers как в Django
+Instrument.objects = _Manager(Instrument)  # type: ignore
+Portfolio.objects = _Manager(Portfolio)  # type: ignore
+Position.objects = _Manager(Position)  # type: ignore

@@ -4,109 +4,145 @@
 Без токена работает демо-режим в консоли.
 """
 from __future__ import annotations
+
 import asyncio
 import os
-from portfolio import Portfolio, PRICES
+import logging
+from typing import Optional
 
-portfolio = Portfolio()
+from portfolio import PortfolioManager
 
-def cmd_start() -> str:
-    return (
-        "Бот учебного портфеля\n"
-        "/portfolio — портфель\n"
-        "/buy TICKER QTY — купить\n"
-        "/sell TICKER QTY — продать\n"
-        "/history — история\n"
-        "/yield — доходность"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Глобальный менеджер портфелей (user_id -> PortfolioManager)
+portfolios: dict[int, PortfolioManager] = {}
+
+
+def get_portfolio(user_id: int) -> PortfolioManager:
+    if user_id not in portfolios:
+        pm = PortfolioManager()
+        # демо-данные
+        pm.add("SBER", 100, 270.0)
+        pm.add("GAZP", 200, 158.0)
+        pm.update_price("SBER", 285.4)
+        pm.update_price("GAZP", 158.2)
+        portfolios[user_id] = pm
+    return portfolios[user_id]
+
+
+async def cmd_start(message) -> None:
+    text = (
+        "Привет! Я бот портфеля (вариант 19).\n"
+        "Команды:\n"
+        "/portfolio — показать портфель\n"
+        "/add TICKER QTY PRICE — добавить позицию\n"
+        "/price TICKER PRICE — обновить цену\n"
+        "/value — стоимость портфеля\n"
     )
+    await message.answer(text)
 
-def cmd_portfolio() -> str:
-    lines = [f"Cash: {portfolio.cash:,.2f}"]
-    for t, p in portfolio.positions.items():
-        price = PRICES.get(t, p.avg_price)
-        lines.append(f"{t}: {p.quantity} x {price} (avg {p.avg_price})")
-    lines.append(f"Итого: {portfolio.value(PRICES):,.2f}")
-    return "\n".join(lines)
 
-def cmd_buy(ticker: str, qty: float) -> str:
-    ticker = ticker.upper()
-    price = PRICES.get(ticker)
-    if price is None:
-        return f"Нет котировки для {ticker}"
-    return portfolio.buy(ticker, qty, price)
+async def cmd_portfolio(message) -> None:
+    pm = get_portfolio(message.from_user.id)
+    lines = [str(p) for p in pm.positions] or ["Пусто"]
+    await message.answer("Портфель:\n" + "\n".join(lines))
 
-def cmd_sell(ticker: str, qty: float) -> str:
-    ticker = ticker.upper()
-    price = PRICES.get(ticker)
-    if price is None:
-        return f"Нет котировки для {ticker}"
-    return portfolio.sell(ticker, qty, price)
 
-def cmd_history() -> str:
-    return "\n".join(portfolio.history) or "Пусто"
+async def cmd_value(message) -> None:
+    pm = get_portfolio(message.from_user.id)
+    await message.answer(f"Стоимость: {pm.total_value():,.2f}\nPnL: {pm.total_pnl():+,.2f}")
 
-def cmd_yield() -> str:
-    invested = sum(p.quantity * p.avg_price for p in portfolio.positions.values())
-    current = sum(p.quantity * PRICES.get(t, p.avg_price) for t, p in portfolio.positions.items())
-    if invested == 0:
-        return "Нет позиций"
-    return f"Доходность: {(current / invested - 1) * 100:.2f}%"
 
-async def run_aiogram():
-    from aiogram import Bot, Dispatcher, types
-    from aiogram.filters import Command
-    token = os.environ.get("BOT_TOKEN")
+async def cmd_add(message) -> None:
+    parts = message.text.split()
+    if len(parts) != 4:
+        await message.answer("Формат: /add TICKER QTY PRICE")
+        return
+    _, ticker, qty_s, price_s = parts
+    try:
+        qty, price = float(qty_s), float(price_s)
+    except ValueError:
+        await message.answer("QTY и PRICE должны быть числами")
+        return
+    pm = get_portfolio(message.from_user.id)
+    pm.add(ticker.upper(), qty, price)
+    await message.answer(f"Добавлено: {ticker.upper()} x {qty} @ {price}")
+
+
+async def cmd_price(message) -> None:
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("Формат: /price TICKER PRICE")
+        return
+    _, ticker, price_s = parts
+    try:
+        price = float(price_s)
+    except ValueError:
+        await message.answer("PRICE должно быть числом")
+        return
+    pm = get_portfolio(message.from_user.id)
+    pm.update_price(ticker.upper(), price)
+    await message.answer(f"Цена {ticker.upper()} = {price}")
+
+
+def run_console_demo() -> None:
+    """Демо без Telegram."""
+    print("=== Демо Telegram-бота (консоль) ===")
+    class FakeUser:
+        id = 1
+    class FakeMessage:
+        from_user = FakeUser()
+        text = ""
+        async def answer(self, text):
+            print("[bot]", text)
+
+    async def demo():
+        msg = FakeMessage()
+        await cmd_start(msg)
+        await cmd_portfolio(msg)
+        await cmd_value(msg)
+        msg.text = "/add LKOH 5 7100"
+        await cmd_add(msg)
+        msg.text = "/price SBER 290"
+        await cmd_price(msg)
+        await cmd_portfolio(msg)
+        await cmd_value(msg)
+
+    asyncio.run(demo())
+
+
+def main() -> None:
+    token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("BOT_TOKEN not set")
-    bot = Bot(token)
+        print("BOT_TOKEN не задан — запуск демо-режима")
+        run_console_demo()
+        return
+
+    try:
+        from aiogram import Bot, Dispatcher
+        from aiogram.filters import Command
+        from aiogram.types import Message
+    except ImportError:
+        print("aiogram не установлен. pip install aiogram")
+        run_console_demo()
+        return
+
+    bot = Bot(token=token)
     dp = Dispatcher()
 
-    @dp.message(Command("start"))
-    async def start(m: types.Message):
-        await m.answer(cmd_start())
+    dp.message.register(cmd_start, Command("start"))
+    dp.message.register(cmd_portfolio, Command("portfolio"))
+    dp.message.register(cmd_value, Command("value"))
+    dp.message.register(cmd_add, Command("add"))
+    dp.message.register(cmd_price, Command("price"))
 
-    @dp.message(Command("portfolio"))
-    async def port(m: types.Message):
-        await m.answer(cmd_portfolio())
+    async def runner():
+        logger.info("Бот запущен")
+        await dp.start_polling(bot)
 
-    @dp.message(Command("buy"))
-    async def buy(m: types.Message):
-        parts = (m.text or "").split()
-        if len(parts) < 3:
-            await m.answer("Формат: /buy SBER 10")
-            return
-        await m.answer(cmd_buy(parts[1], float(parts[2])))
+    asyncio.run(runner())
 
-    @dp.message(Command("sell"))
-    async def sell(m: types.Message):
-        parts = (m.text or "").split()
-        if len(parts) < 3:
-            await m.answer("Формат: /sell SBER 10")
-            return
-        await m.answer(cmd_sell(parts[1], float(parts[2])))
-
-    @dp.message(Command("history"))
-    async def hist(m: types.Message):
-        await m.answer(cmd_history())
-
-    @dp.message(Command("yield"))
-    async def yld(m: types.Message):
-        await m.answer(cmd_yield())
-
-    await dp.start_polling(bot)
-
-def demo():
-    print(cmd_start())
-    print(cmd_buy("SBER", 10))
-    print(cmd_buy("GAZP", 20))
-    print(cmd_portfolio())
-    print(cmd_sell("SBER", 5))
-    print(cmd_yield())
-    print(cmd_history())
 
 if __name__ == "__main__":
-    if os.environ.get("BOT_TOKEN"):
-        asyncio.run(run_aiogram())
-    else:
-        print("BOT_TOKEN не задан — демо-режим\n")
-        demo()
+    main()
